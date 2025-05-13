@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Performance Predictor</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-vis"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-r from-blue-100 via-purple-100 to-pink-100 min-h-screen p-6 font-sans">
+
+  <div class="max-w-4xl mx-auto bg-white p-6 rounded-xl shadow-md">
+    <h1 class="text-3xl font-bold mb-6 text-center text-indigo-600">🎓 Student Performance Predictor</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <input id="age" type="number" placeholder="Age" class="input" />
+      <input id="gender" placeholder="Gender (0:Male, 1:Female)" class="input" />
+      <input id="study_hours" type="number" step="0.1" placeholder="Study Hours" class="input" />
+      <input id="social_media_hour" type="number" step="0.1" placeholder="Social Media Hours" class="input" />
+      <input id="part_time_job" placeholder="Part-Time Job (0/1)" class="input" />
+      <input id="attendance_percentage" type="number" placeholder="Attendance %" class="input" />
+      <input id="sleep_hours" type="number" step="0.1" placeholder="Sleep Hours" class="input" />
+      <input id="diet_quality" placeholder="Diet Quality (0:Poor, 1:Good)" class="input" />
+      <input id="parental_education_level" placeholder="Parental Education Level (0–3)" class="input" />
+      <input id="extracurricular_participation" placeholder="Extracurricular (0/1)" class="input" />
+      <input id="exam_score" type="number" placeholder="Exam Score" class="input" />
+    </div>
+
+    <div class="flex flex-wrap gap-2 justify-center mt-4">
+      <button onclick="train()" class="btn">Train</button>
+      <button onclick="test()" class="btn">Test</button>
+      <button onclick="predict()" class="btn">Predict</button>
+      <button onclick="save()" class="btn">Save</button>
+      <button onclick="load()" class="btn">Load</button>
+    </div>
+
+    <div id="predictionResult" class="mt-6 text-center text-lg text-purple-700"></div>
+  </div>
+
+  <style>
+    .input {
+      padding: 0.5rem;
+      border: 1px solid #ddd;
+      border-radius: 0.5rem;
+      width: 100%;
+    }
+    .btn {
+      background-color: #6366f1;
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-weight: bold;
+      transition: background-color 0.3s ease;
+    }
+    .btn:hover {
+      background-color: #4f46e5;
+    }
+  </style>
+
+  <script>
+    let model;
+    let featureValueMax, featureValueMin, labelValueMax, labelValueMin;
+    let TrainingFeature, TrainingLabel, TestingFeature, TestingLabel;
+    const classLabel = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    function normalise(tensor, min, max) {
+      return tensor.sub(min).div(max.sub(min));
+    }
+
+    function denormalise(tensor, min, max) {
+      return tensor.mul(max.sub(min)).add(min);
+    }
+
+    function createModel() {
+      const model = tf.sequential();
+      model.add(tf.layers.dense({ units: 16, activation: 'relu', inputShape: [11] }));
+      model.add(tf.layers.dense({ units: classLabel.length, activation: 'softmax' }));
+      model.compile({
+        loss: 'categoricalCrossentropy',
+        optimizer: tf.train.adam(0.01),
+        metrics: ['accuracy']
+      });
+      return model;
+    }
+
+    async function trainModel() {
+      const callbacks = tfvis.show.fitCallbacks(
+        { name: 'Training Performance' },
+        ['loss', 'acc'],
+        { height: 200, callbacks: ['onEpochEnd'] }
+      );
+      return await model.fit(TrainingFeature, TrainingLabel, {
+        batchSize: 32,
+        epochs: 20,
+        callbacks
+      });
+    }
+
+    async function train() {
+      model = createModel();
+      tfvis.show.modelSummary({ name: 'Model Summary' }, model);
+      const history = await trainModel();
+      alert(`Training completed. Final loss: ${history.history.loss.slice(-1)[0]}`);
+    }
+
+    async function test() {
+      const evalResult = model.evaluate(TestingFeature, TestingLabel);
+      const loss = (await evalResult[0].data())[0];
+      const acc = (await evalResult[1].data())[0];
+      alert(`Test Loss: ${loss.toFixed(4)}, Accuracy: ${acc.toFixed(4)}`);
+    }
+
+    async function predict() {
+      const values = [
+        parseFloat(document.getElementById('age').value),
+        parseFloat(document.getElementById('gender').value),
+        parseFloat(document.getElementById('study_hours').value),
+        parseFloat(document.getElementById('social_media_hour').value),
+        parseFloat(document.getElementById('part_time_job').value),
+        parseFloat(document.getElementById('attendance_percentage').value),
+        parseFloat(document.getElementById('sleep_hours').value),
+        parseFloat(document.getElementById('diet_quality').value),
+        parseFloat(document.getElementById('parental_education_level').value),
+        parseFloat(document.getElementById('extracurricular_participation').value),
+        parseFloat(document.getElementById('exam_score').value)
+      ];
+      const inputTensor = tf.tensor2d([values]);
+      const normInput = normalise(inputTensor, featureValueMin, featureValueMax);
+      const prediction = model.predict(normInput);
+      const result = await prediction.data();
+
+      let output = "<h3 class='text-xl font-bold'>Prediction Probabilities:</h3><ul class='list-disc list-inside'>";
+      result.forEach((val, i) => {
+        output += `<li>Rating ${classLabel[i]}: ${(val * 100).toFixed(2)}%</li>`;
+      });
+      output += "</ul>";
+      document.getElementById("predictionResult").innerHTML = output;
+    }
+
+    async function save() {
+      await model.save("localstorage://student_habits_model");
+      localStorage.setItem("MinMax", JSON.stringify({
+        featureValueMax: (await featureValueMax.data())[0],
+        featureValueMin: (await featureValueMin.data())[0]
+      }));
+      alert("Model saved successfully!");
+    }
+
+    async function load() {
+      model = await tf.loadLayersModel("localstorage://student_habits_model");
+      const minmax = JSON.parse(localStorage.getItem("MinMax"));
+      featureValueMax = tf.scalar(minmax.featureValueMax);
+      featureValueMin = tf.scalar(minmax.featureValueMin);
+      alert("Model loaded successfully!");
+    }
+
+    async function run() {
+      const dataset = await tf.data.csv("http://127.0.0.1:8080/student_habits_performance.csv");
+      const points = await dataset.map(record => {
+        const values = [
+    parseFloat(record.age),
+    record.gender === 'Male' ? 0 : 1,
+    parseFloat(record.study_hours_per_day),
+    parseFloat(record.social_media_hours),
+    record.part_time_job === 'Yes' ? 1 : 0,
+    parseFloat(record.attendance_percentage),
+    parseFloat(record.sleep_hours),
+    record.diet_quality === 'Poor' ? 0 : record.diet_quality === 'Fair' ? 1 : 2,
+    record.parental_education_level === 'High School' ? 0 : 1,
+    record.extracurricular_participation === 'Yes' ? 1 : 0,
+    parseFloat(record.exam_score)
+  ];
+        return { x: values, y: parseInt(record.mental_health_rating) };
+      }).toArray();
+
+      const features = points.map(p => p.x);
+      const labels = points.map(p => p.y);
+
+      const featureTensor = tf.tensor2d(features);
+      featureValueMax = featureTensor.max();
+      featureValueMin = featureTensor.min();
+      const normFeatures = normalise(featureTensor, featureValueMin, featureValueMax);
+
+      const labelTensor = tf.tensor1d(labels, 'int32');
+      const oneHotLabels = tf.oneHot(labelTensor, classLabel.length);
+
+      [TrainingFeature, TestingFeature] = tf.split(normFeatures, 2);
+      [TrainingLabel, TestingLabel] = tf.split(oneHotLabels, 2);
+
+      alert("Data loaded successfully!");
+    }
+
+    run();
+  </script>
+</body>
+</html>

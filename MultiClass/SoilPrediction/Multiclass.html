@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Crop Recommendation</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-vis"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #e3f2fd, #ffffff);
+      color: #2c3e50;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 30px;
+      background-color: white;
+      border-radius: 15px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+      animation: fadeIn 0.6s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+      color: #00695c;
+    }
+
+    label {
+      font-weight: 500;
+      display: block;
+      margin: 10px 0 5px;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      border: 2px solid #b2dfdb;
+      border-radius: 8px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+
+    button {
+      width: 48%;
+      margin: 10px 1%;
+      padding: 12px;
+      background-color: #00897b;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #00695c;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
+
+    #predictionOutput {
+      margin-top: 20px;
+      padding: 15px;
+      background: #e0f2f1;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    ul {
+      padding-left: 20px;
+    }
+
+    @media (max-width: 600px) {
+      button { width: 100%; margin: 5px 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🌱 Crop Recommendation</h1>
+
+    <label>Nitrogen (N):</label>
+    <input type="number" id="N" />
+
+    <label>Phosphorus (P):</label>
+    <input type="number" id="P" />
+
+    <label>Potassium (K):</label>
+    <input type="number" id="K" />
+
+    <label>Temperature (°C):</label>
+    <input type="number" id="temperature" step="0.1" />
+
+    <label>Humidity (%):</label>
+    <input type="number" id="humidity" step="0.1" />
+
+    <label>pH:</label>
+    <input type="number" id="ph" step="0.1" />
+
+    <label>Rainfall (mm):</label>
+    <input type="number" id="rainfall" step="0.1" />
+
+    <div class="actions">
+      <button onclick="train()">Train</button>
+      <button onclick="test()">Test</button>
+      <button onclick="predict()">Predict</button>
+      <button onclick="save()">Save</button>
+      <button onclick="load()">Load</button>
+    </div>
+
+    <div id="predictionOutput"></div>
+  </div>
+
+  <script>
+    let model;
+    let featureValueMax, featureValueMin;
+    let TrainingFeature, TrainingLabel, TestingFeature, TestingLabel;
+    let classLabel = ["rice", "wheat", "maize", "cotton","chickpea","kidneybeans","pigeonpeas","mothbeans","mungbean","blackgram","lentil","pomegranate","banana","mango","grapes","watermelon","muskmelon","apple","orange","papaya","coconut","jute","coffee"]; // Add your actual class labels here
+
+    function normalise(tensor, min, max) {
+      return tensor.sub(min).div(max.sub(min));
+    }
+
+    function denormalise(tensor, min, max) {
+      return tensor.mul(max.sub(min)).add(min);
+    }
+
+    function createModel() {
+      const model = tf.sequential();
+      model.add(tf.layers.dense({ units: 16, activation: 'relu', inputShape: [7] }));
+      model.add(tf.layers.dense({ units: classLabel.length, activation: 'softmax' }));
+      model.compile({
+        loss: 'categoricalCrossentropy',
+        optimizer: tf.train.adam(0.01),
+        metrics: ['accuracy']
+      });
+      return model;
+    }
+
+    async function trainModel() {
+      const { onEpochEnd } = tfvis.show.fitCallbacks({ name: "Training Performance" }, ['loss', 'acc'], { height: 200 });
+      return await model.fit(TrainingFeature, TrainingLabel, {
+        batchSize: 32,
+        epochs: 20,
+        callbacks: { onEpochEnd }
+      });
+    }
+
+    async function train() {
+      model = createModel();
+      tfvis.show.modelSummary({ name: 'Model Summary' }, model);
+      const history = await trainModel();
+      alert(`Training Complete. Final Loss: ${history.history.loss.slice(-1)[0]}`);
+    }
+
+    async function test() {
+      const evalResult = model.evaluate(TestingFeature, TestingLabel);
+      const loss = await evalResult[0].dataSync()[0];
+      const acc = await evalResult[1].dataSync()[0];
+      alert(`Test Loss: ${loss.toFixed(4)}, Accuracy: ${(acc * 100).toFixed(2)}%`);
+    }
+
+    async function predict() {
+      const values = [
+        parseInt(document.getElementById('N').value),
+        parseInt(document.getElementById('P').value),
+        parseInt(document.getElementById('K').value),
+        parseFloat(document.getElementById('temperature').value),
+        parseFloat(document.getElementById('humidity').value),
+        parseFloat(document.getElementById('ph').value),
+        parseFloat(document.getElementById('rainfall').value)
+      ];
+      const inputTensor = tf.tensor2d([values]);
+      const normalizedInput = normalise(inputTensor, featureValueMin, featureValueMax);
+      const prediction = model.predict(normalizedInput);
+      const result = await prediction.data();
+
+      let html = "<h3>Prediction Results:</h3><ul>";
+      result.forEach((prob, idx) => {
+        html += `<li>${classLabel[idx]}: <strong>${(prob * 100).toFixed(2)}%</strong></li>`;
+      });
+      html += "</ul>";
+      document.getElementById("predictionOutput").innerHTML = html;
+    }
+
+    async function save() {
+      await model.save("localstorage://crop_model");
+      localStorage.setItem("MinMax", JSON.stringify({
+        featureValueMax: (await featureValueMax.data())[0],
+        featureValueMin: (await featureValueMin.data())[0],
+      }));
+      alert("Model and data saved successfully.");
+    }
+
+    async function load() {
+      model = await tf.loadLayersModel("localstorage://crop_model");
+      const minmax = JSON.parse(localStorage.getItem("MinMax"));
+      featureValueMax = tf.scalar(minmax.featureValueMax);
+      featureValueMin = tf.scalar(minmax.featureValueMin);
+      alert("Model loaded successfully.");
+    }
+
+    async function run() {
+      const dataset = await tf.data.csv("http://127.0.0.1:8080/Crop_recommendation.csv");
+      const points = await dataset.map(record => {
+        return {
+          x: [
+            parseFloat(record.N),
+            parseFloat(record.P),
+            parseFloat(record.K),
+            parseFloat(record.temperature),
+            parseFloat(record.humidity),
+            parseFloat(record.ph),
+            parseFloat(record.rainfall)
+          ],
+          y: classLabel.indexOf(record.label)
+        };
+      }).toArray();
+
+      const cleaned = points.filter(p => p.y !== -1);
+      const featureData = cleaned.map(p => p.x);
+      const labelData = cleaned.map(p => p.y);
+
+      const featureTensor = tf.tensor2d(featureData);
+      featureValueMax = featureTensor.max();
+      featureValueMin = featureTensor.min();
+
+      const normalizedFeatures = normalise(featureTensor, featureValueMin, featureValueMax);
+      const labelTensor = tf.tensor1d(labelData, 'int32');
+      const oneHotLabels = tf.oneHot(labelTensor, classLabel.length);
+
+      [TrainingFeature, TestingFeature] = tf.split(normalizedFeatures, 2);
+      [TrainingLabel, TestingLabel] = tf.split(oneHotLabels, 2);
+
+      alert("Dataset loaded successfully.");
+    }
+
+    run();
+  </script>
+</body>
+</html>

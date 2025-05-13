@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cat vs Dog Classifier (No Python)</title>
+  <style>
+    body {
+      font-family: Arial;
+      text-align: center;
+      background: #f0f0f0;
+      padding: 30px;
+    }
+    .box {
+      background: #fff;
+      padding: 20px;
+      max-width: 600px;
+      margin: auto;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    img {
+      max-width: 200px;
+      margin: 10px;
+      border-radius: 10px;
+    }
+    input {
+      margin: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="box">
+  <h2>Cat vs Dog Image Classifier</h2>
+
+  <label>Select Training Images (e.g. cat_1.jpg, dog_2.jpg):</label><br>
+  <input type="file" id="trainImages" multiple accept="image/*"><br><br>
+  <button onclick="trainModel()">Train Model</button><br><br>
+
+  <label>Upload Test Image:</label><br>
+  <input type="file" id="testImage" accept="image/*"><br>
+  <img id="preview" style="display:none;"><br>
+  <button onclick="predict()">Predict</button><br><br>
+
+  <h3>Prediction: <span id="output">None</span></h3>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0"></script>
+
+<script>
+  let model;
+  const IMAGE_SIZE = 64;
+
+  // Load and preprocess an image file
+  async function loadImage(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const tensor = tf.browser.fromPixels(img)
+            .resizeNearestNeighbor([IMAGE_SIZE, IMAGE_SIZE])
+            .toFloat()
+            .div(255.0)
+            .expandDims();
+          resolve(tensor);
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Train the model from uploaded labeled images
+  async function trainModel() {
+    const files = document.getElementById('trainImages').files;
+    if (files.length === 0) return alert("Upload training images!");
+
+    const xs = [];
+    const ys = [];
+
+    for (let file of files) {
+      const tensor = await loadImage(file);
+      xs.push(tensor);
+
+      // Label as [1, 0] for Cat, [0, 1] for Dog
+      const label = file.name.toLowerCase().includes('cat') ? [1, 0] : [0, 1];
+      ys.push(label);
+    }
+
+    const xTrain = tf.concat(xs);
+    const yTrain = tf.tensor2d(ys);
+
+    model = tf.sequential();
+    model.add(tf.layers.conv2d({
+      inputShape: [IMAGE_SIZE, IMAGE_SIZE, 3],
+      filters: 8,
+      kernelSize: 3,
+      activation: 'relu'
+    }));
+    model.add(tf.layers.maxPooling2d({ poolSize: 2 }));
+    model.add(tf.layers.flatten());
+    model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+    model.add(tf.layers.dense({ units: 2, activation: 'softmax' }));
+
+    model.compile({
+      optimizer: 'adam',
+      loss: 'categoricalCrossentropy',
+      metrics: ['accuracy']
+    });
+
+    await model.fit(xTrain, yTrain, {
+      epochs: 10,
+      batchSize: 4,
+      callbacks: {
+        onEpochEnd: (epoch, logs) => {
+          console.log(`Epoch ${epoch + 1}: loss=${logs.loss.toFixed(4)}, accuracy=${(logs.acc * 100).toFixed(2)}%`);
+        }
+      }
+    });
+
+    alert("Training complete!");
+    xTrain.dispose();
+    yTrain.dispose();
+  }
+
+  // Show preview image
+  document.getElementById('testImage').addEventListener('change', function (e) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = document.getElementById('preview');
+      img.src = reader.result;
+      img.style.display = 'block';
+    };
+    reader.readAsDataURL(e.target.files[0]);
+  });
+
+  // Predict using trained model
+  async function predict() {
+    if (!model) return alert("Please train the model first!");
+
+    const file = document.getElementById('testImage').files[0];
+    if (!file) return alert("Upload a test image!");
+
+    const inputTensor = await loadImage(file);
+    const prediction = model.predict(inputTensor).dataSync();
+    const result = prediction[0] > prediction[1] ? "Cat" : "Dog";
+    document.getElementById('output').textContent = result;
+
+    inputTensor.dispose();
+  }
+</script>
+
+</body>
+</html>

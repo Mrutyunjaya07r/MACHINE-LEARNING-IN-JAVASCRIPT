@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>House Price Predictor</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-vis"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4faff;
+      text-align: center;
+    }
+    h2 {
+      background: #dceeff;
+      padding: 20px;
+      margin: 0;
+    }
+    .section-container {
+      display: flex;
+      justify-content: space-around;
+      flex-wrap: wrap;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .section {
+      background: #fff;
+      margin: 20px;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      width: 40%;
+      min-width: 300px;
+    }
+    input[type="number"] {
+      padding: 10px;
+      width: 80%;
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 10px 15px;
+      margin: 5px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #ccc;
+    }
+    .subtitle {
+      margin-top: -10px;
+      margin-bottom: 20px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h2>House Price Predictor</h2>
+  <p class="subtitle">Train a linear regression model using TensorFlow.js</p>
+  <button onclick="tfvis.visor().toggle()">Toggle Visor</button>
+
+  <div class="section-container">
+    <div class="section">
+      <h3>🔧 Train & Test</h3>
+      <p><strong>Status:</strong> <span id="training-status">Loading...</span></p>
+      <p><strong>Training Loss:</strong> <span id="training-loss">N/A</span></p>
+      <p><strong>Testing Loss:</strong> <span id="testing-loss">N/A</span></p>
+      <button onclick="train()">Train Model</button>
+      <button onclick="test()">Test Model</button>
+      <button onclick="saveModel()">Save Model</button>
+      <button onclick="loadModel()">Load Model</button>
+    </div>
+
+    <div class="section">
+      <h3>📈 Predict</h3>
+      <input type="number" id="input-sqft" placeholder="Enter sqft (e.g. 2000)"><br>
+      <button onclick="predict()">Predict Price</button>
+      <p><strong>Prediction:</strong> <span id="prediction-result">N/A</span></p>
+    </div>
+  </div>
+
+  <script>
+    let model;
+    let featureMin, featureMax, labelMin, labelMax;
+    let trainingFeatureValues, trainingLabelValues, testingFeatureValues, testingLabelValues;
+    let points = [];  
+    let latestPredictedPoint = null;
+
+    function normalize(tensor, min, max) {
+      return tensor.sub(min).div(max.sub(min));
+    }
+
+    function denormalize(tensor, min, max) {
+      return tensor.mul(max.sub(min)).add(min);
+    }
+
+    function createModel() {
+      const model = tf.sequential();
+      model.add(tf.layers.dense({ units: 1, inputShape: [1] }));
+      model.compile({ optimizer: tf.train.sgd(0.1), loss: 'meanSquaredError' });
+      return model;
+    }
+
+    async function trainModel() {
+      const { onEpochEnd } = tfvis.show.fitCallbacks({ name: 'Training Performance' }, ['loss']);
+      return model.fit(trainingFeatureValues, trainingLabelValues, {
+        batchSize: 32,
+        epochs: 20,
+        callbacks: { onEpochEnd },
+      });
+    }
+
+    async function train() {
+      model = createModel();
+      tfvis.show.modelSummary({ name: 'Model Summary' }, model);
+
+      const history = await trainModel();
+      const trainingLoss = history.history.loss.slice(-1)[0];
+      document.getElementById("training-loss").innerText = trainingLoss.toFixed(5);
+      document.getElementById("training-status").innerText = "Training complete ✅";
+    }
+
+    async function test() {
+      const lossTensor = model.evaluate(testingFeatureValues, testingLabelValues);
+      const loss = (await lossTensor.data())[0];
+      document.getElementById("testing-loss").innerText = loss.toFixed(5);
+    }
+
+    function predict() {
+      const input = parseFloat(document.getElementById("input-sqft").value);
+      if (isNaN(input) || !model) return alert("Enter valid input and train/load model");
+
+      const inputTensor = tf.tensor2d([input], [1, 1]);
+      const normalizedInput = normalize(inputTensor, featureMin, featureMax);
+      const prediction = model.predict(normalizedInput);
+      const denormPrediction = denormalize(prediction, labelMin, labelMax);
+
+      denormPrediction.data().then(predictedValue => {
+        const predictedPrice = predictedValue[0];
+        document.getElementById("prediction-result").innerText = "$" + predictedPrice.toFixed(0);
+
+        // Visualize prediction as a red dot
+        latestPredictedPoint = [{ x: input, y: predictedPrice }];
+        tfvis.render.scatterplot(
+          { name: 'Square Footage vs Price (with Prediction)' },
+          {
+            values: [points, latestPredictedPoint],
+            series: ['Data', 'Prediction']
+          },
+          {
+            xLabel: 'Sqft',
+            yLabel: 'Price',
+            height: 400
+          }
+        );
+      });
+    }
+
+    async function saveModel() {
+      if (!model) return alert("Train or load a model first.");
+      await model.save("localstorage://house-model");
+      localStorage.setItem("minMax", JSON.stringify({
+        featureMin: (await featureMin.data())[0],
+        featureMax: (await featureMax.data())[0],
+        labelMin: (await labelMin.data())[0],
+        labelMax: (await labelMax.data())[0],
+      }));
+      alert("Model saved to localStorage ✅");
+    }
+
+    async function loadModel() {
+      try {
+        model = await tf.loadLayersModel("localstorage://house-model");
+        const minMax = JSON.parse(localStorage.getItem("minMax"));
+        featureMin = tf.scalar(minMax.featureMin);
+        featureMax = tf.scalar(minMax.featureMax);
+        labelMin = tf.scalar(minMax.labelMin);
+        labelMax = tf.scalar(minMax.labelMax);
+        document.getElementById("training-status").innerText = "Model loaded ✅";
+      } catch (e) {
+        alert("No saved model found.");
+      }
+    }
+
+    async function run() {
+      const dataset = tf.data.csv("http://127.0.0.1:8080/kc_house_data.csv");
+
+      points = await dataset.map(row => ({
+        x: row.sqft_living,
+        y: row.price
+      })).toArray();
+
+      tf.util.shuffle(points);
+      if (points.length % 2 !== 0) points.pop();
+
+      const featureValues = points.map(p => p.x);
+      const labelValues = points.map(p => p.y);
+
+      const featureTensor = tf.tensor2d(featureValues, [featureValues.length, 1]);
+      const labelTensor = tf.tensor2d(labelValues, [labelValues.length, 1]);
+
+      featureMin = featureTensor.min();
+      featureMax = featureTensor.max();
+      labelMin = labelTensor.min();
+      labelMax = labelTensor.max();
+
+      const normalizedFeatures = normalize(featureTensor, featureMin, featureMax);
+      const normalizedLabels = normalize(labelTensor, labelMin, labelMax);
+
+      [trainingFeatureValues, testingFeatureValues] = tf.split(normalizedFeatures, 2);
+      [trainingLabelValues, testingLabelValues] = tf.split(normalizedLabels, 2);
+
+      tfvis.render.scatterplot(
+        { name: 'Square Footage vs Price (with Prediction)' },
+        {
+          values: [points],
+          series: ['Data']
+        },
+        {
+          xLabel: 'Sqft',
+          yLabel: 'Price',
+          height: 400
+        }
+      );
+
+      document.getElementById("training-status").innerText = "Data loaded ✅";
+    }
+
+    run();
+  </script>
+</body>
+</html>

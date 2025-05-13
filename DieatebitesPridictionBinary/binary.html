@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Diabetes Prediction App</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-vis"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f4f6f9;
+      padding: 40px;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 600px;
+    }
+    h1 {
+      text-align: center;
+      color: #2c3e50;
+    }
+    .form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    input[type="number"] {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+    .button {
+      text-align: center;
+      margin-top: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      border: none;
+      border-radius: 8px;
+      background-color: #3498db;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    #prediction {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 18px;
+      color: #27ae60;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Diabetes Prediction App</h1>
+    <div class="form">
+      <label>Pregnancies</label>
+      <input type="number" id="Preg">
+      <label>Glucose</label>
+      <input type="number" id="Gluc">
+      <label>Blood Pressure</label>
+      <input type="number" id="BP">
+      <label>BMI</label>
+      <input type="number" id="BMI">
+      <label>Diabetes Pedigree Function</label>
+      <input type="number" id="DiabetesPedigreeFunction">
+      <label>Age</label>
+      <input type="number" id="age">
+    </div>
+    <div class="button">
+      <button onclick="train()">Train</button>
+      <button onclick="test()">Test</button>
+      <button onclick="prediction()">Predict</button>
+      <button onclick="save()">Save</button>
+      <button onclick="load()">Load</button>
+    </div>
+    <div id="prediction">Prediction: --</div>
+  </div>
+
+  <script>
+    let model;
+    let featureValuemax, featureValuemin, LabelValuemax, LabelValuemin;
+    let trainingFeatureValue, trainingLabelValue, testingFeatureValue, testingLabelValue;
+
+    function normalize(tensor, min, max) {
+      return tensor.sub(min).div(max.sub(min));
+    }
+
+    function denormalize(tensor, min, max) {
+      return tensor.mul(max.sub(min)).add(min);
+    }
+
+    function createModel() {
+      const model = tf.sequential();
+      model.add(tf.layers.dense({ units: 10, activation: 'relu', inputShape: [6] }));
+      model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
+      model.compile({
+        loss: 'binaryCrossentropy',
+        optimizer: tf.train.adam(0.01),
+        metrics: ['accuracy']
+      });
+      return model;
+    }
+
+    async function trainModel() {
+      const { onEpochEnd } = tfvis.show.fitCallbacks({ name: "Training Performance" }, ['loss', 'acc'],
+      { height: 200, callbacks: ['onEpochEnd'] });
+      await model.fit(trainingFeatureValue, trainingLabelValue, {
+        batchSize: 32,
+        epochs: 20,
+        callbacks: { onEpochEnd }
+      });
+    }
+
+    async function train() {
+      model = createModel();
+      tfvis.show.modelSummary({ name: 'Model Summary' }, model);
+     let history=await trainModel();
+     let losstrain=history.history.loss.slice(-1)[0]
+     alert(losstrain);
+    }
+
+    async function test() {
+      const evalResult = await model.evaluate(testingFeatureValue, testingLabelValue);
+      const loss = evalResult[0].dataSync()[0];
+      const acc = evalResult[1].dataSync()[0];
+      alert(`Test Loss: ${loss.toFixed(4)}, Accuracy: ${acc.toFixed(4)}`);
+    }
+
+    async function prediction() {
+      const values = [
+        parseFloat(document.getElementById('Preg').value),
+        parseFloat(document.getElementById('Gluc').value),
+        parseFloat(document.getElementById('BP').value),
+        parseFloat(document.getElementById('BMI').value),
+        parseFloat(document.getElementById('DiabetesPedigreeFunction').value),
+        parseFloat(document.getElementById('age').value)
+      ];
+
+      if (values.some(v => isNaN(v)) || !model) {
+        alert('Invalid input or model not loaded');
+        return;
+      }
+
+      const inputTensor = tf.tensor2d([values]);
+      const normalizedInput = normalize(inputTensor, featureValuemin, featureValuemax);
+      const prediction = model.predict(normalizedInput);
+      const result = (await prediction.data())[0];
+
+      document.getElementById('prediction').innerText = `Prediction: ${result > 0.5 ? 'Positive (1)' : 'Negative (0)'}`;
+    }
+
+    async function save() {
+      if (!model) {
+        alert('Model not available');  
+        return;
+      }
+      await model.save('localstorage://diabetes-model');
+      localStorage.setItem('minMax', JSON.stringify({
+        featureValuemin: (await featureValuemin.data())[0],
+        featureValuemax: (await featureValuemax.data())[0],
+        LabelValuemin: (await LabelValuemin.data())[0],
+        LabelValuemax: (await LabelValuemax.data())[0],
+      }));
+      alert("Model saved to browser local storage");
+    }
+
+    async function load() {
+      try {
+        model = await tf.loadLayersModel('localstorage://diabetes-model');
+        const minMax = JSON.parse(localStorage.getItem('minMax'));
+        featureValuemin = tf.scalar(minMax.featureValuemin);
+        featureValuemax = tf.scalar(minMax.featureValuemax);
+        LabelValuemin = tf.scalar(minMax.LabelValuemin);
+        LabelValuemax = tf.scalar(minMax.LabelValuemax);
+        alert('Model loaded successfully');
+      } catch (e) {
+        console.error(e);
+        alert('Failed to load model');
+      }
+    }
+
+        async function run() {
+  const dataSet = tf.data.csv('http://127.0.0.1:8080/diabetes.csv', { hasHeader: true });
+
+  const points = await dataSet.map(record => {
+    const values = [
+      record.Pregnancies,
+      record.Glucose,
+      record.BloodPressure,
+      record.BMI,
+      record.DiabetesPedigreeFunction,
+      record.Age
+    ];
+    return { x: values, y: record.Outcome };
+  }).toArray();
+
+  const validPoints = points.filter(p => p !== null);
+
+  const featureValue = validPoints.map(p => p.x);
+  const labelValue = validPoints.map(p => p.y);
+
+  const featureTensor = tf.tensor2d(featureValue);
+  const labelTensor = tf.tensor2d(labelValue, [labelValue.length, 1]);
+
+  featureValuemax = featureTensor.max();
+  featureValuemin = featureTensor.min();
+  LabelValuemax = labelTensor.max();
+  LabelValuemin = labelTensor.min();
+
+  const normalizedFeature = normalize(featureTensor, featureValuemin, featureValuemax);
+  const normalizedLabel = normalize(labelTensor, LabelValuemin, LabelValuemax);
+
+  [trainingFeatureValue, testingFeatureValue] = tf.split(normalizedFeature, 2);
+  [trainingLabelValue, testingLabelValue] = tf.split(normalizedLabel, 2);
+
+  alert("Data loaded and normalized");
+}
+
+    run();
+  </script>
+</body>
+</html>
